@@ -86,10 +86,10 @@ class ArtBot(irc.IRCClient):
         if self.painting:
             return
 
-        self.msg(config['channel'], 'Please use one of the following commands:')
-        self.msg(config['channel'], 'artBot, help: Ask me for help')
-        self.msg(config['channel'], 'artBot, paint <tag>: Paint ASCII message by tag (random by default)')
-        self.msg(config['channel'], 'artBot, list-tags: Lists all message tags for painting')
+        self.msg(config['channel'], 'List of commands:')
+        self.msg(config['channel'], '\x02artBot, help:\x02 Ask me for help')
+        self.msg(config['channel'], '\x02artBot, paint <tag>:\x02 Paint ASCII message by tag (random by default)')
+        self.msg(config['channel'], '\x02artBot, list-tags:\x02 Lists all message tags for painting')
 
     def printTags(self):
         if self.painting:
@@ -105,26 +105,26 @@ class ArtBot(irc.IRCClient):
             self.lunchtimePaintingQueued = True
             return
 
-        self.paintMessage(config['lunchtime-painting'])
+        self.paintMessage(config['lunchtime-painting'], False)
 
     def paintBreaktimeMessage(self):
         if self.painting:
             self.breaktimePaintingQueued = True
             return
 
-        self.paintMessage(config['breaktime-painting'])
+        self.paintMessage(config['breaktime-painting'], False)
 
     def paintMessageRandom(self):
         painting = random.choice(config['paintings'])
-        self.paintMessage(painting['message'])
+        self.paintMessage(painting['message'], painting['coloredMessage'])
 
     def paintMessageByTag(self, tag):
         for painting in config['paintings']:
             if re.match('^' + tag + '$', painting['tag']):
-                self.paintMessage(painting['message'])
+                self.paintMessage(painting['message'], painting['coloredMessage'])
                 break
 
-    def paintMessage(self, message):
+    def paintMessage(self, message, coloredMessage):
         if self.painting:
             return
 
@@ -132,6 +132,9 @@ class ArtBot(irc.IRCClient):
         reactor.callLater(numSeconds, self.enablePainting)
 
         for msg in message:
+            if coloredMessage:
+                msg = msg.replace('^k', '\03')
+
             reactor.callLater(numSeconds, self.printDelayedMessage, msg)
             numSeconds += 2
 
