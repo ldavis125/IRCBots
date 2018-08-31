@@ -31,6 +31,14 @@ class ArtBot(irc.IRCClient):
         self.painting = False
         self.lunchtimePaintingQueued = False
         self.breaktimePaintingQueued = False
+        self.teatimePaintingQueued = False
+
+        self.lunchtime = datetime.time(hour=config['lunchtime']['hour'],
+                                        minute=config['lunchtime']['minute'])
+        self.breaktime = datetime.time(hour=config['breaktime']['hour'],
+                                        minute=config['breaktime']['minute'])
+        self.teatime = datetime.time(hour=config['teatime']['hour'],
+                                        minute=config['teatime']['minute'])
 
         self.tags = []
         self.loadTags()
@@ -39,8 +47,11 @@ class ArtBot(irc.IRCClient):
         lc.start(60)
 
     def signedOn(self):
-        self.join(config['channel'])
-        print('Channel: ' + config['channel'])
+        self.join(config['art-channel'])
+        self.join(config['tea-channel'])
+
+        print('Channel: ' + config['art-channel'])
+        print('Channel: ' + config['tea-channel'])
         print('Nickname: ' + config['nick'])
     
     def luserClient(self, info):
@@ -59,6 +70,9 @@ class ArtBot(irc.IRCClient):
         print(oldName + ' has been renamed to ' + newName)
 
     def privmsg(self, user, channel, message):
+        if not self.isArtChannel(channel):
+            return
+
         message = irc.stripFormatting(message)
         
         if self.isHelpCommand(message):
@@ -66,12 +80,10 @@ class ArtBot(irc.IRCClient):
         elif self.isListTagsCommand(message):
             self.printTags()
         elif self.isPaintCommand(message):
-            args = message.split()
-            
-            if len(args) == 2:
-                self.paintMessageRandom()
-            else:
-                self.paintMessageByTag(args[2])
+            self.paintMessageByNumArgs(message)
+
+    def isArtChannel(self, channel):
+        return channel == config['art-channel']
 
     def isHelpCommand(self, message):
         return re.match('^' + config['nick'] + ',\s+help$', message)
@@ -86,45 +98,59 @@ class ArtBot(irc.IRCClient):
         if self.painting:
             return
 
-        self.msg(config['channel'], 'List of commands:')
-        self.msg(config['channel'], '\x02artBot, help:\x02 Ask me for help')
-        self.msg(config['channel'], '\x02artBot, paint <tag>:\x02 Paint ASCII message by tag (random by default)')
-        self.msg(config['channel'], '\x02artBot, list-tags:\x02 Lists all message tags for painting')
+        self.msg(config['art-channel'], 'List of commands:')
+        self.msg(config['art-channel'], '\x02artBot, help:\x02 Ask me for help')
+        self.msg(config['art-channel'], '\x02artBot, paint <tag>:\x02 Paint ASCII message by tag (random by default)')
+        self.msg(config['art-channel'], '\x02artBot, list-tags:\x02 Lists all message tags for painting')
 
     def printTags(self):
         if self.painting:
             return
 
-        self.msg(config['channel'], 'Here is a list of available tags (artBot, paint <tag>):')
+        self.msg(config['art-channel'], 'Here is a list of available tags (artBot, paint <tag>):')
         
         line = ', '.join(sorted(self.tags))
-        self.msg(config['channel'], line)
+        self.msg(config['art-channel'], line)
+
+    def paintMessageByNumArgs(self, message):
+        args = message.split()
+        if len(args) == 2:
+            self.paintMessageRandom()
+        else:
+            self.paintMessageByTag(args[2])
 
     def paintLunchtimeMessage(self):
         if self.painting:
             self.lunchtimePaintingQueued = True
             return
 
-        self.paintMessage(config['lunchtime-painting'], False)
+        self.paintMessage(config['art-channel'], config['lunchtime-painting'], False)
 
     def paintBreaktimeMessage(self):
         if self.painting:
             self.breaktimePaintingQueued = True
             return
 
-        self.paintMessage(config['breaktime-painting'], False)
+        self.paintMessage(config['art-channel'], config['breaktime-painting'], False)
+
+    def paintTeatimeMessage(self):
+        if self.painting:
+            self.teatimePaintingQueued = True
+            return
+
+        self.paintMessage(config['tea-channel'], config['teatime-painting'], False)
 
     def paintMessageRandom(self):
         painting = random.choice(config['paintings'])
-        self.paintMessage(painting['message'], painting['coloredMessage'])
+        self.paintMessage(config['art-channel'], painting['message'], painting['coloredMessage'])
 
     def paintMessageByTag(self, tag):
         for painting in config['paintings']:
             if re.match('^' + tag + '$', painting['tag']):
-                self.paintMessage(painting['message'], painting['coloredMessage'])
+                self.paintMessage(config['art-channel'], painting['message'], painting['coloredMessage'])
                 break
 
-    def paintMessage(self, message, coloredMessage):
+    def paintMessage(self, channel, message, coloredMessage):
         if self.painting:
             return
 
@@ -135,18 +161,18 @@ class ArtBot(irc.IRCClient):
             if coloredMessage:
                 msg = msg.replace('^k', '\03')
 
-            reactor.callLater(numSeconds, self.printDelayedMessage, msg)
+            reactor.callLater(numSeconds, self.printDelayedMessage, channel, msg)
             numSeconds += 2
 
-        reactor.callLater(numSeconds, self.printDelayedMessage, self.getQuote())
+        reactor.callLater(numSeconds, self.printDelayedMessage, channel, self.getQuote())
         reactor.callLater(numSeconds, self.disablePainting)
 
     def getQuote(self):
         quote = random.choice(config['quotes'])
         return quote + ' - Bob Ross'
 
-    def printDelayedMessage(self, message):
-        self.msg(config['channel'], message)
+    def printDelayedMessage(self, channel, message):
+        self.msg(channel, message)
 
     def enablePainting(self):
         self.painting = True
@@ -158,25 +184,36 @@ class ArtBot(irc.IRCClient):
         for painting in config['paintings']:
             self.tags.append(painting['tag'])
 
-    def scheduleEvents(self):
+    def paintingEventQueued(self):
         if self.lunchtimePaintingQueued:
             self.lunchtimePaintingQueued = False
             self.paintLunchtimeMessage()
-            return
+            return True
         elif self.breaktimePaintingQueued:
             self.breaktimePaintingQueued = False
             self.paintBreaktimeMessage()
+            return True
+        elif self.teatimePaintingQueued:
+            self.teatimePaintingQueued = False
+            self.paintTeatimeMessage()
+            return True
+
+        return False
+
+    def paintEventMessageIfTime(self, hour, minute):
+        if hour == self.lunchtime.hour and minute == self.lunchtime.minute:
+            self.paintLunchtimeMessage()
+        elif hour == self.breaktime.hour and minute == self.breaktime.minute:
+            self.paintBreaktimeMessage()
+        elif hour == self.teatime.hour and minute == self.teatime.minute:
+            self.paintTeatimeMessage()
+
+    def scheduleEvents(self):
+        if self.paintingEventQueued():
             return
 
         now = datetime.datetime.time(datetime.datetime.now())
-
-        lunchtime = datetime.time(hour=11, minute=30)
-        breaktime = datetime.time(hour=15, minute=0)
-
-        if now.hour == lunchtime.hour and now.minute == lunchtime.minute:
-            self.paintLunchtimeMessage()
-        elif now.hour == breaktime.hour and now.minute == breaktime.minute:
-            self.paintBreaktimeMessage()
+        self.paintEventMessageIfTime(now.hour, now.minute)
 
 def main():
     server = config['server']
