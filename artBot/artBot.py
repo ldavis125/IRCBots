@@ -73,7 +73,7 @@ class ArtBot(irc.IRCClient):
         if not self.isArtChannel(channel):
             return
 
-        message = irc.stripFormatting(message)
+        message = irc.stripFormatting(message).lower()
         
         if self.isHelpCommand(message):
             self.printHelpMessage()
