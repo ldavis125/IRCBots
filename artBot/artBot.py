@@ -17,9 +17,19 @@ import re
 import json
 
 import datetime
+from enum import Enum
 
 from twisted.words.protocols import irc
 from twisted.internet import task, reactor, protocol
+
+class DayOfWeek(Enum):
+    MONDAY = 0
+    TUESDAY = 1
+    WEDNESDAY = 2
+    THURSDAY = 3
+    FRIDAY = 4
+    SATURDAY = 5
+    SUNDAY = 6
 
 with open(r'config.json') as file:
     config = json.load(file)
@@ -29,10 +39,17 @@ class ArtBot(irc.IRCClient):
 
     def __init__(self):
         self.painting = False
+        
+        self.humpdayPaintingQueued = False
+
+        self.humpday = DayOfWeek.WEDNESDAY
+
         self.lunchtimePaintingQueued = False
         self.breaktimePaintingQueued = False
         self.teatimePaintingQueued = False
 
+        self.dailyEventTime= datetime.time(hour=config['daily-event-time']['hour'],
+                                        minute=config['daily-event-time']['minute'])
         self.lunchtime = datetime.time(hour=config['lunchtime']['hour'],
                                         minute=config['lunchtime']['minute'])
         self.breaktime = datetime.time(hour=config['breaktime']['hour'],
@@ -140,6 +157,13 @@ class ArtBot(irc.IRCClient):
 
         self.paintMessage(config['tea-channel'], config['teatime-painting'], False)
 
+    def paintHumpdayMessage(self):
+        if self.painting:
+            self.humpdayPaintingQueued = True
+            return
+
+        self.paintMessage(config['art-channel'], config['humpday-painting'], False)
+
     def paintMessageRandom(self):
         painting = random.choice(config['paintings'])
         self.paintMessage(config['art-channel'], painting['message'], painting['coloredMessage'])
@@ -154,7 +178,9 @@ class ArtBot(irc.IRCClient):
         if self.painting:
             return
 
-        numSeconds = 0
+        # set to 1 so that the first line is painted at the same moment
+        # artBot logs on
+        numSeconds = 1
         reactor.callLater(numSeconds, self.enablePainting)
 
         for msg in message:
@@ -185,6 +211,11 @@ class ArtBot(irc.IRCClient):
             self.tags.append(painting['tag'])
 
     def paintingEventQueued(self):
+        if self.humpdayPaintingQueued:
+            self.humpdayPaintingQueued = False
+            self.paintHumpdayMessage()
+            return True
+
         if self.lunchtimePaintingQueued:
             self.lunchtimePaintingQueued = False
             self.paintLunchtimeMessage()
@@ -200,7 +231,13 @@ class ArtBot(irc.IRCClient):
 
         return False
 
-    def paintEventMessageIfTime(self, hour, minute):
+    def paintEventMessageIfTime(self, dayOfWeek, hour, minute):
+        # Weekly events
+        if hour == self.dailyEventTime.hour and minute == self.dailyEventTime.minute:
+            if dayOfWeek == self.humpday:
+                self.paintHumpdayMessage()
+        
+        # Daily events
         if hour == self.lunchtime.hour and minute == self.lunchtime.minute:
             self.paintLunchtimeMessage()
         elif hour == self.breaktime.hour and minute == self.breaktime.minute:
@@ -209,11 +246,14 @@ class ArtBot(irc.IRCClient):
             self.paintTeatimeMessage()
 
     def scheduleEvents(self):
-        if self.paintingEventQueued():
+        today = datetime.datetime.today().weekday()
+        if self.paintingEventQueued() \
+                or today == DayOfWeek.SATURDAY \
+                or today == DayOfWeek.SUNDAY:
             return
 
-        now = datetime.datetime.time(datetime.datetime.now())
-        self.paintEventMessageIfTime(now.hour, now.minute)
+        time = datetime.datetime.time(datetime.datetime.now())
+        self.paintEventMessageIfTime(today, time.hour, time.minute)
 
 def main():
     server = config['server']
